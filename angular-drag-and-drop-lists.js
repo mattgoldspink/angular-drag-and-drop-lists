@@ -381,6 +381,25 @@ angular.module('dndLists', [])
         }, 100);
       });
 
+      function getOffset(event) {
+          var el = event.target.offsetParent,
+                 x = 0,
+                 y = 0;
+
+          while (el && !isNaN(el.offsetLeft) && !isNaN(el.offsetTop)) {
+              x += el.offsetLeft - el.scrollLeft;
+              y += el.offsetTop - el.scrollTop;
+              el = el.offsetParent;
+          }
+          x = event.clientX - x;
+          y = event.clientY - y;
+
+          return {
+              x: x,
+              y: y
+          };
+      }
+
       /**
        * Checks whether the mouse pointer is in the first half of the given target element.
        *
@@ -390,8 +409,9 @@ angular.module('dndLists', [])
        * relative to the parent element of targetNode.
        */
       function isMouseInFirstHalf(event, targetNode, relativeToParent) {
-        var mousePointer = horizontal ? (event.offsetX || event.layerX)
-                                      : (event.offsetY || event.layerY);
+        var xy = getOffset(event);
+        var mousePointer = horizontal ? (xy.x || xy.x)
+                                      : (xy.y || xy.y);
         var targetSize = horizontal ? targetNode.offsetWidth : targetNode.offsetHeight;
         var targetPosition = horizontal ? targetNode.offsetLeft : targetNode.offsetTop;
         targetPosition = relativeToParent ? targetPosition : 0;
