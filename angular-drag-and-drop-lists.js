@@ -84,13 +84,13 @@ angular.module('dndLists', [])
        * which is the primary way we communicate with the target element
        */
       element.on('dragstart', function(event) {
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
 
         // Serialize the data associated with this element. IE only supports the Text drag type
-        event.dataTransfer.setData("Text", angular.toJson(scope.$eval(attr.dndDraggable)));
+        localEvent.dataTransfer.setData("Text", angular.toJson(scope.$eval(attr.dndDraggable)));
 
         // Only allow actions specified in dnd-effect-allowed attribute
-        event.dataTransfer.effectAllowed = attr.dndEffectAllowed || "move";
+        localEvent.dataTransfer.effectAllowed = attr.dndEffectAllowed || "move";
 
         // Add CSS classes. See documentation above
         element.addClass("dndDragging");
@@ -105,9 +105,9 @@ angular.module('dndLists', [])
         dndDragTypeWorkaround.dragType = attr.dndType ? scope.$eval(attr.dndType) : undefined;
 
         // Invoke callback
-        $parse(attr.dndDragstart)(scope, {event: event});
+        $parse(attr.dndDragstart)(scope, {event: localEvent});
 
-        event.stopPropagation();
+        localEvent.stopPropagation();
       });
 
       /**
@@ -116,7 +116,7 @@ angular.module('dndLists', [])
        * we will invoke the callbacks specified with the dnd-moved or dnd-copied attribute.
        */
       element.on('dragend', function(event) {
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
 
         // Invoke callbacks. Usually we would use event.dataTransfer.dropEffect to determine
         // the used effect, but Chrome has not implemented that field correctly. On Windows
@@ -126,23 +126,23 @@ angular.module('dndLists', [])
         scope.$apply(function() {
           switch (dropEffect) {
             case "move":
-              $parse(attr.dndMoved)(scope, {event: event});
+              $parse(attr.dndMoved)(scope, {event: localEvent});
               break;
             case "copy":
-              $parse(attr.dndCopied)(scope, {event: event});
+              $parse(attr.dndCopied)(scope, {event: localEvent});
               break;
             case "none":
-              $parse(attr.dndCanceled)(scope, {event: event});
+              $parse(attr.dndCanceled)(scope, {event: localEvent});
               break;
           }
-          $parse(attr.dndDragend)(scope, {event: event, dropEffect: dropEffect});
+          $parse(attr.dndDragend)(scope, {event: localEvent, dropEffect: dropEffect});
         });
 
         // Clean up
         element.removeClass("dndDragging");
         $timeout(function() { element.removeClass("dndDraggingSource"); }, 0);
         dndDragTypeWorkaround.isDragging = false;
-        event.stopPropagation();
+        localEvent.stopPropagation();
       });
 
       /**
@@ -152,13 +152,13 @@ angular.module('dndLists', [])
       element.on('click', function(event) {
         if (!attr.dndSelected) return;
 
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
         scope.$apply(function() {
-          $parse(attr.dndSelected)(scope, {event: event});
+          $parse(attr.dndSelected)(scope, {event: localEvent});
         });
 
         // Prevent triggering dndSelected in parant elements.
-        event.stopPropagation();
+        localEvent.stopPropagation();
       });
 
       /**
@@ -231,6 +231,7 @@ angular.module('dndLists', [])
       var placeholder = getPlaceholderElement();
       var placeholderNode = placeholder[0];
       var listNode = element[0];
+      var isIE = detectIE();
       placeholder.remove();
 
       var horizontal = attr.dndHorizontalList && scope.$eval(attr.dndHorizontalList);
@@ -241,19 +242,14 @@ angular.module('dndLists', [])
        * is being dragged over our list, or over an child element.
        */
       element.on('dragover', function(event) {
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
+        var xy = getOffset(localEvent);
 
-        if (!isDropAllowed(event)) return true;
+        if (!isDropAllowed(localEvent)) return true;
 
-        // First of all, make sure that the placeholder is shown
-        // This is especially important if the list is empty
-        if (placeholderNode.parentNode != listNode) {
-          element.append(placeholder);
-        }
-
-        if (event.target !== listNode) {
+        if (localEvent.target !== listNode) {
           // Try to find the node direct directly below the list node.
-          var listItemNode = event.target;
+          var listItemNode = localEvent.target;
           while (listItemNode.parentNode !== listNode && listItemNode.parentNode) {
             listItemNode = listItemNode.parentNode;
           }
@@ -261,45 +257,50 @@ angular.module('dndLists', [])
           if (listItemNode.parentNode === listNode && listItemNode !== placeholderNode) {
             // If the mouse pointer is in the upper half of the child element,
             // we place it before the child element, otherwise below it.
-            if (isMouseInFirstHalf(event, listItemNode)) {
+            if (isMouseInFirstHalf(xy, listItemNode)) {
               listNode.insertBefore(placeholderNode, listItemNode);
             } else {
               listNode.insertBefore(placeholderNode, listItemNode.nextSibling);
             }
           }
-        } else {
+          if (placeholderNode.parentNode != listNode) {
+            element.append(placeholder);
+          }
+        } else if (isIE) {
           // This branch is reached when we are dragging directly over the list element.
           // Usually we wouldn't need to do anything here, but the IE does not fire it's
           // events for the child element, only for the list directly. Therefore we repeat
           // the positioning algorithm for IE here.
-          if (isMouseInFirstHalf(event, placeholderNode, true)) {
+          if (isMouseInFirstHalf(xy, placeholderNode, true)) {
             // Check if we should move the placeholder element one spot towards the top.
             // Note that display none elements will have offsetTop and offsetHeight set to
             // zero, therefore we need a special check for them.
             while (placeholderNode.previousElementSibling
-                 && (isMouseInFirstHalf(event, placeholderNode.previousElementSibling, true)
+                 && (isMouseInFirstHalf(xy, placeholderNode.previousElementSibling, true)
                  || placeholderNode.previousElementSibling.offsetHeight === 0)) {
               listNode.insertBefore(placeholderNode, placeholderNode.previousElementSibling);
             }
           } else {
             // Check if we should move the placeholder element one spot towards the bottom
             while (placeholderNode.nextElementSibling &&
-                 !isMouseInFirstHalf(event, placeholderNode.nextElementSibling, true)) {
+                 !isMouseInFirstHalf(xy, placeholderNode.nextElementSibling, true)) {
               listNode.insertBefore(placeholderNode,
                   placeholderNode.nextElementSibling.nextElementSibling);
             }
           }
+        } else if (placeholderNode.parentNode != listNode) {
+          element.append(placeholder);
         }
 
         // At this point we invoke the callback, which still can disallow the drop.
         // We can't do this earlier because we want to pass the index of the placeholder.
-        if (attr.dndDragover && !invokeCallback(attr.dndDragover, event, getPlaceholderIndex())) {
+        if (attr.dndDragover && !invokeCallback(attr.dndDragover, localEvent, getPlaceholderIndex())) {
           return stopDragover();
         }
 
         element.addClass("dndDragover");
-        event.preventDefault();
-        event.stopPropagation();
+        localEvent.preventDefault();
+        localEvent.stopPropagation();
         return false;
       });
 
@@ -309,17 +310,17 @@ angular.module('dndLists', [])
        * one child element per array element.
        */
       element.on('drop', function(event) {
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
 
-        if (!isDropAllowed(event)) return true;
+        if (!isDropAllowed(localEvent)) return true;
 
         // The default behavior in Firefox is to interpret the dropped element as URL and
         // forward to it. We want to prevent that even if our drop is aborted.
-        event.preventDefault();
+        localEvent.preventDefault();
 
         // Unserialize the data that was serialized in dragstart. According to the HTML5 specs,
         // the "Text" drag type will be converted to text/plain, but IE does not do that.
-        var data = event.dataTransfer.getData("Text") || event.dataTransfer.getData("text/plain");
+        var data = localEvent.dataTransfer.getData("Text") || localEvent.dataTransfer.getData("text/plain");
         var transferredObject;
         try {
           transferredObject = JSON.parse(data);
@@ -330,7 +331,7 @@ angular.module('dndLists', [])
         // Invoke the callback, which can transform the transferredObject and even abort the drop.
         var index = getPlaceholderIndex();
         if (attr.dndDrop) {
-          transferredObject = invokeCallback(attr.dndDrop, event, index, transferredObject);
+          transferredObject = invokeCallback(attr.dndDrop, localEvent, index, transferredObject);
           if (!transferredObject) {
             return stopDragover();
           }
@@ -341,24 +342,24 @@ angular.module('dndLists', [])
         scope.$apply(function() {
           targetArray.splice(index, 0, transferredObject);
         });
-        invokeCallback(attr.dndInserted, event, index, transferredObject);
+        invokeCallback(attr.dndInserted, localEvent, index, transferredObject);
 
         // In Chrome on Windows the dropEffect will always be none...
         // We have to determine the actual effect manually from the allowed effects
-        if (event.dataTransfer.dropEffect === "none") {
-          if (event.dataTransfer.effectAllowed === "copy" ||
-              event.dataTransfer.effectAllowed === "move") {
-            dndDropEffectWorkaround.dropEffect = event.dataTransfer.effectAllowed;
+        if (localEvent.dataTransfer.dropEffect === "none") {
+          if (localEvent.dataTransfer.effectAllowed === "copy" ||
+              localEvent.dataTransfer.effectAllowed === "move") {
+            dndDropEffectWorkaround.dropEffect = localEvent.dataTransfer.effectAllowed;
           } else {
-            dndDropEffectWorkaround.dropEffect = event.ctrlKey ? "copy" : "move";
+            dndDropEffectWorkaround.dropEffect = localEvent.ctrlKey ? "copy" : "move";
           }
         } else {
-          dndDropEffectWorkaround.dropEffect = event.dataTransfer.dropEffect;
+          dndDropEffectWorkaround.dropEffect = localEvent.dataTransfer.dropEffect;
         }
 
         // Clean up
         stopDragover();
-        event.stopPropagation();
+        localEvent.stopPropagation();
         return false;
       });
 
@@ -370,11 +371,13 @@ angular.module('dndLists', [])
        * again. If it is there, dragover must have been called in the meantime, i.e. the element
        * is still dragging over the list. If you know a better way of doing this, please tell me!
        */
+      var existingDeferred = null;
       element.on('dragleave', function(event) {
-        event = event.originalEvent || event;
-
         element.removeClass("dndDragover");
-        $timeout(function() {
+        if (existingDeferred) {
+          $timeout.cancel(existingDeferred);
+        }
+        existingDeferred = $timeout(function() {
           if (!element.hasClass("dndDragover")) {
             placeholder.remove();
           }
@@ -408,13 +411,22 @@ angular.module('dndLists', [])
        * on the listNode instead of the listNodeItem, therefore the mouse positions are
        * relative to the parent element of targetNode.
        */
-      function isMouseInFirstHalf(event, targetNode, relativeToParent) {
-        var xy = getOffset(event);
-        var mousePointer = horizontal ? (xy.x || xy.x)
-                                      : (xy.y || xy.y);
-        var targetSize = horizontal ? targetNode.offsetWidth : targetNode.offsetHeight;
-        var targetPosition = horizontal ? targetNode.offsetLeft : targetNode.offsetTop;
-        targetPosition = relativeToParent ? targetPosition : 0;
+      function isMouseInFirstHalf(xy, targetNode, relativeToParent) {
+        var mousePointer, targetSize, targetPosition = 0;
+        if (horizontal) {
+          mousePointer = xy.x;
+          targetSize = targetNode.offsetWidth;
+          if (relativeToParent) {
+            targetPosition = targetNode.offsetLeft;
+          }
+        } else {
+          mousePointer = xy.y;
+          var cachedHeight = targetNode.getAttribute('data-dnd-height');
+          targetSize = cachedHeight || targetNode.offsetHeight;
+          if (relativeToParent) {
+            targetPosition = targetNode.offsetTop;
+          }
+        }
         return mousePointer < targetPosition + targetSize / 2;
       }
 
@@ -519,14 +531,14 @@ angular.module('dndLists', [])
        * We will prevent that and also stop the event from bubbling up.
        */
       element.on('dragstart', function(event) {
-        event = event.originalEvent || event;
+        var localEvent = event.originalEvent || event;
 
         // If a child element already reacted to dragstart and set a dataTransfer object, we will
         // allow that. For example, this is the case for user selections inside of input elements.
-        if (!(event.dataTransfer.types && event.dataTransfer.types.length)) {
-          event.preventDefault();
+        if (!(localEvent.dataTransfer.types && localEvent.dataTransfer.types.length)) {
+          localEvent.preventDefault();
         }
-        event.stopPropagation();
+        localEvent.stopPropagation();
       });
 
       /**
@@ -534,8 +546,8 @@ angular.module('dndLists', [])
        * would be removed.
        */
       element.on('dragend', function(event) {
-        event = event.originalEvent || event;
-        event.stopPropagation();
+        var localEvent = event.originalEvent || event;
+        localEvent.stopPropagation();
       });
     };
   })
@@ -556,3 +568,43 @@ angular.module('dndLists', [])
    * https://code.google.com/p/chromium/issues/detail?id=39399
    */
   .factory('dndDropEffectWorkaround', function(){ return {} });
+
+function detectIE() {
+  var ua = window.navigator.userAgent;
+
+  // Test values; Uncomment to check result …
+
+  // IE 10
+  // ua = 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2; Trident/6.0)';
+  
+  // IE 11
+  // ua = 'Mozilla/5.0 (Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko';
+  
+  // IE 12 / Spartan
+  // ua = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.71 Safari/537.36 Edge/12.0';
+  
+  // Edge (IE 12+)
+  // ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2486.0 Safari/537.36 Edge/13.10586';
+
+  var msie = ua.indexOf('MSIE ');
+  if (msie > 0) {
+    // IE 10 or older => return version number
+    return parseInt(ua.substring(msie + 5, ua.indexOf('.', msie)), 10);
+  }
+
+  var trident = ua.indexOf('Trident/');
+  if (trident > 0) {
+    // IE 11 => return version number
+    var rv = ua.indexOf('rv:');
+    return parseInt(ua.substring(rv + 3, ua.indexOf('.', rv)), 10);
+  }
+
+  var edge = ua.indexOf('Edge/');
+  if (edge > 0) {
+    // Edge (IE 12+) => return version number
+    return parseInt(ua.substring(edge + 5, ua.indexOf('.', edge)), 10);
+  }
+
+  // other browser
+  return false;
+}
