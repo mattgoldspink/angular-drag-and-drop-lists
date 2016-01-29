@@ -231,7 +231,6 @@ angular.module('dndLists', [])
       var placeholder = getPlaceholderElement();
       var placeholderNode = placeholder[0];
       var listNode = element[0];
-      var isIE = detectIE();
       placeholder.remove();
 
       var horizontal = attr.dndHorizontalList && scope.$eval(attr.dndHorizontalList);
@@ -241,11 +240,18 @@ angular.module('dndLists', [])
        * The dragover event is triggered "every few hundred milliseconds" while an element
        * is being dragged over our list, or over an child element.
        */
+      var debounceId = null;
       element.on('dragover', function(event) {
         var localEvent = event.originalEvent || event;
         var xy = getOffset(localEvent);
 
-        if (!isDropAllowed(localEvent)) return true;
+        if (!isDropAllowed(localEvent)) {
+          return true;
+        }
+
+        if (placeholderNode.parentNode != listNode) {
+          element.append(placeholder);
+        }
 
         if (localEvent.target !== listNode) {
           // Try to find the node direct directly below the list node.
@@ -253,43 +259,22 @@ angular.module('dndLists', [])
           while (listItemNode.parentNode !== listNode && listItemNode.parentNode) {
             listItemNode = listItemNode.parentNode;
           }
+        } else {
+          //find where in the list we are in order to position the placeholder
+          var children = listNode.children;
+          // start at middle and see if we're above
+          var indexToInsert = findNodeToInsertBefore(children, xy);
+          listNode.insertBefore(placeholderNode, indexToInsert == -1 ? null : children[indexToInsert]);
+        }
 
-          if (listItemNode.parentNode === listNode && listItemNode !== placeholderNode) {
-            // If the mouse pointer is in the upper half of the child element,
-            // we place it before the child element, otherwise below it.
-            if (isMouseInFirstHalf(xy, listItemNode)) {
-              listNode.insertBefore(placeholderNode, listItemNode);
-            } else {
-              listNode.insertBefore(placeholderNode, listItemNode.nextSibling);
-            }
-          }
-          if (placeholderNode.parentNode != listNode) {
-            element.append(placeholder);
-          }
-        } else if (isIE) {
-          // This branch is reached when we are dragging directly over the list element.
-          // Usually we wouldn't need to do anything here, but the IE does not fire it's
-          // events for the child element, only for the list directly. Therefore we repeat
-          // the positioning algorithm for IE here.
-          if (isMouseInFirstHalf(xy, placeholderNode, true)) {
-            // Check if we should move the placeholder element one spot towards the top.
-            // Note that display none elements will have offsetTop and offsetHeight set to
-            // zero, therefore we need a special check for them.
-            while (placeholderNode.previousElementSibling
-                 && (isMouseInFirstHalf(xy, placeholderNode.previousElementSibling, true)
-                 || placeholderNode.previousElementSibling.offsetHeight === 0)) {
-              listNode.insertBefore(placeholderNode, placeholderNode.previousElementSibling);
-            }
+        if (listItemNode && listItemNode.parentNode === listNode && listItemNode !== placeholderNode) {
+          // If the mouse pointer is in the upper half of the child element,
+          // we place it before the child element, otherwise below it.
+          if (isMouseInFirstHalf(xy, listItemNode)) {
+            listNode.insertBefore(placeholderNode, listItemNode);
           } else {
-            // Check if we should move the placeholder element one spot towards the bottom
-            while (placeholderNode.nextElementSibling &&
-                 !isMouseInFirstHalf(xy, placeholderNode.nextElementSibling, true)) {
-              listNode.insertBefore(placeholderNode,
-                  placeholderNode.nextElementSibling.nextElementSibling);
-            }
+            listNode.insertBefore(placeholderNode, listItemNode.nextElementSibling);
           }
-        } else if (placeholderNode.parentNode != listNode) {
-          element.append(placeholder);
         }
 
         // At this point we invoke the callback, which still can disallow the drop.
@@ -304,6 +289,31 @@ angular.module('dndLists', [])
         return false;
       });
 
+
+      function findNodeToInsertBefore(array, xy) {
+          'use strict';
+          var minIndex = 0;
+          var maxIndex = array.length - 1;
+          var currentIndex;
+          var currentElement;
+          var isInFirstHalf;
+
+          while (minIndex <= maxIndex) {
+              currentIndex = (minIndex + maxIndex) / 2 | 0;
+              currentElement = array[currentIndex];
+              isInFirstHalf = isMouseInFirstHalf(xy, currentElement, true);
+              if (isInFirstHalf) {
+                  minIndex = currentIndex + 1;
+              }
+              else if (currentElement !== placeholderNode) {
+                  maxIndex = currentIndex - 1;
+              }
+              else {
+                  return currentIndex;
+              }
+          }
+          return -1;
+      }
       /**
        * When the element is dropped, we use the position of the placeholder element as the
        * position where we insert the transferred data. This assumes that the list has exactly
@@ -371,17 +381,13 @@ angular.module('dndLists', [])
        * again. If it is there, dragover must have been called in the meantime, i.e. the element
        * is still dragging over the list. If you know a better way of doing this, please tell me!
        */
-      var existingDeferred = null;
       element.on('dragleave', function(event) {
         element.removeClass("dndDragover");
-        if (existingDeferred) {
-          $timeout.cancel(existingDeferred);
-        }
-        existingDeferred = $timeout(function() {
+        setTimeout(function() {
           if (!element.hasClass("dndDragover")) {
             placeholder.remove();
           }
-        }, 100);
+        }, 250);
       });
 
       function getOffset(event) {
@@ -450,7 +456,16 @@ angular.module('dndLists', [])
        * object needs to be inserted
        */
       function getPlaceholderIndex() {
-        return Array.prototype.indexOf.call(listNode.children, placeholderNode);
+        var index = Array.prototype.indexOf.call(listNode.children, placeholderNode);
+        // need to adjust by -1 if it's after the original dndDraggingSourc
+        for (var i = 0; i < listNode.children.length; i++) {
+          if (/dndDraggingSource/.test(listNode.children[i].className)) {
+            if (index > i) {
+              return index - 1;
+            }
+          }
+        }
+        return index;
       }
 
       /**
@@ -568,43 +583,3 @@ angular.module('dndLists', [])
    * https://code.google.com/p/chromium/issues/detail?id=39399
    */
   .factory('dndDropEffectWorkaround', function(){ return {} });
-
-function detectIE() {
-  var ua = window.navigator.userAgent;
-
-  // Test values; Uncomment to check result …
-
-  // IE 10
-  // ua = 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2; Trident/6.0)';
-  
-  // IE 11
-  // ua = 'Mozilla/5.0 (Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko';
-  
-  // IE 12 / Spartan
-  // ua = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.71 Safari/537.36 Edge/12.0';
-  
-  // Edge (IE 12+)
-  // ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2486.0 Safari/537.36 Edge/13.10586';
-
-  var msie = ua.indexOf('MSIE ');
-  if (msie > 0) {
-    // IE 10 or older => return version number
-    return parseInt(ua.substring(msie + 5, ua.indexOf('.', msie)), 10);
-  }
-
-  var trident = ua.indexOf('Trident/');
-  if (trident > 0) {
-    // IE 11 => return version number
-    var rv = ua.indexOf('rv:');
-    return parseInt(ua.substring(rv + 3, ua.indexOf('.', rv)), 10);
-  }
-
-  var edge = ua.indexOf('Edge/');
-  if (edge > 0) {
-    // Edge (IE 12+) => return version number
-    return parseInt(ua.substring(edge + 5, ua.indexOf('.', edge)), 10);
-  }
-
-  // other browser
-  return false;
-}
